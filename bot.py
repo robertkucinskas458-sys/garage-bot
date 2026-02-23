@@ -1,41 +1,130 @@
 import logging
 import sqlite3
 import os
+import asyncio
+import random
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler, MessageHandler,
+    filters, ContextTypes, ConversationHandler
+)
 
+# ========== ДАННЫЕ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
-    raise ValueError("Токен не найден! Добавьте TOKEN в переменные окружения")
+    raise ValueError("❌ Ошибка: TOKEN не найден! Добавь в переменные окружения")
 
-GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "0"))
-if GROUP_CHAT_ID == 0:
-    raise ValueError("ID группы не найден! Добавьте GROUP_CHAT_ID в переменные окружения")
+GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")
+if not GROUP_CHAT_ID:
+    raise ValueError("❌ Ошибка: GROUP_CHAT_ID не найден!")
+GROUP_CHAT_ID = int(GROUP_CHAT_ID)
 
 admin_ids_str = os.getenv("ADMIN_IDS", "")
 if not admin_ids_str:
-    raise ValueError("Список админов не найден! Добавьте ADMIN_IDS в переменные окружения")
+    raise ValueError("❌ Ошибка: ADMIN_IDS не найден!")
 ADMIN_IDS = [int(id.strip()) for id in admin_ids_str.split(",")]
 
-TOPIC_ID = int(os.getenv("TOPIC_ID", "0"))
+TOPIC_ID = os.getenv("TOPIC_ID")
+if TOPIC_ID:
+    TOPIC_ID = int(TOPIC_ID)
+else:
+    TOPIC_ID = None
 
 CAR_NAME, CAR_PLATE = range(2)
 
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+
+# ========== РУГАТЕЛЬСТВА (10 вариантов) ==========
+INSULTS = [
+    "⚠️ **{} сюда писать нельзя, долбаеб!**",
+    "⚠️ **{} ты че, самый умный? По теме пиши!**",
+    "⚠️ **{} еще одно такое сообщение — пизды получишь!**",
+    "⚠️ **{} для тебя специально тему создали, мудак!**",
+    "⚠️ **{} руки из жопы? Сюда нельзя писать!**",
+    "⚠️ **{} ты вообще читать умеешь? Только по теме!**",
+    "⚠️ **{} за такие сообщения по ебалу дают!**",
+    "⚠️ **{} иди нахуй отсюда со своим флудом!**",
+    "⚠️ **{} тему видишь? Туда пиши, дебил!**",
+    "⚠️ **{} последнее предупреждение, урод!**",
+]
+
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+async def delete_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, delay: int = 3):
+    """Удалить сообщение через указанное количество секунд"""
+    await asyncio.sleep(delay)
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception as e:
+        logging.error(f"Не удалось удалить сообщение {message_id}: {e}")
+
+async def safe_delete(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
+    """Безопасное удаление сообщения"""
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception as e:
+        logging.error(f"Ошибка удаления: {e}")
+
+def get_user_mention(user):
+    """Получить упоминание пользователя"""
+    if user.username:
+        return f"@{user.username}"
+    else:
+        return f"[{user.full_name}](tg://user?id={user.id})"
+
+def get_user_name(user):
+    """Получить имя пользователя для отображения"""
+    if user.username:
+        return f"@{user.username}"
+    else:
+        return user.full_name or str(user.id)
+
+async def insult_user(context: ContextTypes.DEFAULT_TYPE, update: Update):
+    """Поругать пользователя и удалить его сообщение"""
+    user = update.effective_user
+    mention = get_user_mention(user)
+    
+    # Удаляем сообщение нарушителя
+    await safe_delete(context, update.effective_chat.id, update.message.message_id)
+    
+    # Выбираем случайное ругательство и подставляем юзера
+    insult_template = random.choice(INSULTS)
+    insult = insult_template.format(mention)
+    
+    # Отправляем и удаляем через 5 секунд
+    msg = await update.effective_chat.send_message(
+        insult,
+        parse_mode="Markdown"
+    )
+    asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 5))
 
 def init_db():
+    """Инициализация базы данных"""
     conn = sqlite3.connect("garage.db")
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS cars
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, plate TEXT,
-                  is_taken INTEGER DEFAULT 0, taken_by INTEGER, taken_at TIMESTAMP)''')
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  name TEXT NOT NULL,
+                  plate TEXT,
+                  is_taken INTEGER DEFAULT 0,
+                  taken_by INTEGER,
+                  taken_at TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS history
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, car_id INTEGER, user_id INTEGER,
-                  action TEXT, condition TEXT, timestamp TIMESTAMP)''')
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  car_id INTEGER,
+                  user_id INTEGER,
+                  action TEXT,
+                  condition TEXT,
+                  timestamp TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (user_id INTEGER PRIMARY KEY, username TEXT, full_name TEXT)''')
-    conn.commit()
+                 (user_id INTEGER PRIMARY KEY,
+                  username TEXT,
+                  full_name TEXT)''')
+    
+    # Начальные машины
     cars = [
         ("Porsche 911 Carrera (993)", "M303YP 78"),
         ("BMW M3 (E46) MostWanted", "M808KA 78"),
@@ -54,249 +143,597 @@ def init_db():
         ("BMW 850CSi", ""),
         ("Audi S4 (B8)", "М111ТС78"),
     ]
-    for n, p in cars:
-        c.execute("INSERT OR IGNORE INTO cars (name, plate) VALUES (?, ?)", (n, p))
+    for name, plate in cars:
+        c.execute("INSERT OR IGNORE INTO cars (name, plate) VALUES (?, ?)", (name, plate))
+    
     conn.commit()
     conn.close()
 
-def get_user_name(u): return f"@{u.username}" if u.username else (u.full_name or str(u.id))
+def save_user_info(user):
+    """Сохранить информацию о пользователе"""
+    try:
+        with sqlite3.connect("garage.db") as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO users (user_id, username, full_name) VALUES (?, ?, ?)",
+                (user.id, user.username, user.full_name)
+            )
+    except Exception as e:
+        logging.error(f"Ошибка сохранения пользователя: {e}")
 
-def save_user_info(u):
-    with sqlite3.connect("garage.db") as conn:
-        conn.execute("INSERT OR REPLACE INTO users VALUES (?, ?, ?)", (u.id, u.username, u.full_name))
+def log_action(car_id, user_id, action, condition=None):
+    """Записать действие в историю"""
+    try:
+        with sqlite3.connect("garage.db") as conn:
+            conn.execute(
+                "INSERT INTO history (car_id, user_id, action, condition, timestamp) VALUES (?, ?, ?, ?, ?)",
+                (car_id, user_id, action, condition, datetime.now())
+            )
+    except Exception as e:
+        logging.error(f"Ошибка логирования: {e}")
 
-def log_action(cid, uid, act, cond=None):
-    with sqlite3.connect("garage.db") as conn:
-        conn.execute("INSERT INTO history (car_id, user_id, action, condition, timestamp) VALUES (?, ?, ?, ?, ?)",
-                     (cid, uid, act, cond, datetime.now()))
+def is_admin(user_id):
+    """Проверка на админа"""
+    return user_id in ADMIN_IDS
 
-def is_admin(uid): return uid in ADMIN_IDS
+# ========== МОДЕРАТОР ЧАТА ==========
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка всех сообщений в группе"""
+    # Если это не группа — пропускаем
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        return
+    
+    # Если это сообщение в нужном топике — пропускаем
+    if TOPIC_ID and update.message.message_thread_id == TOPIC_ID:
+        return
+    
+    # Если это команда /cars — пропускаем
+    if update.message.text and update.message.text.startswith("/cars"):
+        return
+    
+    # Всё остальное — удаляем и ругаемся
+    await insult_user(context, update)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    save_user_info(u)
-    kb = [[InlineKeyboardButton("🚗 Взять машину", callback_data="take_car")],
-          [InlineKeyboardButton("🔙 Вернуть машину", callback_data="return_car")]]
-    if is_admin(u.id):
-        kb.append([InlineKeyboardButton("📜 История", callback_data="history")])
-        kb.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
-    await update.message.reply_text("Добро пожаловать в гараж!", reply_markup=InlineKeyboardMarkup(kb))
+# ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
+async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /cars - показывает меню (админское в ЛС, обычное в группе)"""
+    # Удаляем сообщение с командой
+    await safe_delete(context, update.effective_chat.id, update.message.message_id)
+    
+    user = update.effective_user
+    chat_type = update.effective_chat.type
+    save_user_info(user)
+    
+    # Базовая клавиатура для всех
+    keyboard = [
+        [InlineKeyboardButton("🚗 Взять машину", callback_data="take_car")],
+        [InlineKeyboardButton("🔙 Вернуть машину", callback_data="return_car")],
+    ]
+    
+    # В личных сообщениях показываем админку, если пользователь админ
+    if chat_type == "private" and is_admin(user.id):
+        keyboard.append([InlineKeyboardButton("📜 История", callback_data="history")])
+        keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
+    
+    # В группе админка НЕ показывается даже админам
+    # (всё остаётся в ЛС для безопасности)
+    
+    msg = await update.effective_chat.send_message(
+        "🚘 **Гараж**\nВыбери действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+    
+    # Удаляем меню через 5 секунд
+    asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 5))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    d = q.data
-    if d == "take_car":
-        await show_free_cars(q)
-    elif d == "return_car":
-        await show_user_taken_cars(q)
-    elif d == "history" and is_admin(q.from_user.id):
-        await show_history(q)
-    elif d == "admin_panel" and is_admin(q.from_user.id):
-        await admin_panel(q)
-    elif d.startswith("take_"):
-        await take_car(q, context, int(d.split("_")[1]))
-    elif d.startswith("return_"):
-        await ask_car_condition(q, int(d.split("_")[1]))
-    elif d.startswith("confirm_return_"):
-        p = d.split("_")
-        await return_car(q, context, int(p[2]), p[3])
-    elif d == "admin_add_car" and is_admin(q.from_user.id):
-        await q.edit_message_text("Введите название машины:")
-        return CAR_NAME
-    elif d == "admin_remove_car" and is_admin(q.from_user.id):
-        await show_cars_for_remove(q)
-    elif d.startswith("remove_"):
-        await remove_car(q, int(d.split("_")[1]))
-    elif d == "admin_force_return" and is_admin(q.from_user.id):
-        await show_taken_cars_for_admin(q)
-    elif d.startswith("force_return_"):
-        await force_return_car(q, context, int(d.split("_")[2]))
-    elif d == "back_to_menu":
-        await back_to_menu(q)
+    """Обработка кнопок"""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    data = query.data
+    chat_type = query.message.chat.type
 
-async def show_free_cars(q):
-    with sqlite3.connect("garage.db") as conn:
-        cars = conn.execute("SELECT id, name, plate FROM cars WHERE is_taken = 0").fetchall()
-    if not cars:
-        await q.edit_message_text("😕 Все машины заняты.")
-        return
-    kb = [[InlineKeyboardButton(f"{n}{' ('+p+')' if p else ''}", callback_data=f"take_{i}")] for i, n, p in cars]
-    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")])
-    await q.edit_message_text("Выберите машину:", reply_markup=InlineKeyboardMarkup(kb))
+    # Удаляем сообщение с кнопками
+    await safe_delete(context, query.message.chat_id, query.message.message_id)
 
-async def take_car(q, ctx, car_id):
-    u = q.from_user
-    with sqlite3.connect("garage.db") as conn:
-        c = conn.execute("SELECT name, plate, is_taken FROM cars WHERE id = ?", (car_id,)).fetchone()
-        if not c or c[2]:
-            await q.edit_message_text("❌ Машина уже занята.")
-            return
-        conn.execute("UPDATE cars SET is_taken = 1, taken_by = ?, taken_at = ? WHERE id = ?",
-                     (u.id, datetime.now(), car_id))
-    log_action(car_id, u.id, "take")
-    msg = f"🚗 {get_user_name(u)} взял машину {c[0]}{' ('+c[1]+')' if c[1] else ''}"
-    if TOPIC_ID != 0:
-        await ctx.bot.send_message(chat_id=GROUP_CHAT_ID, message_thread_id=TOPIC_ID, text=msg)
-    else:
-        await ctx.bot.send_message(chat_id=GROUP_CHAT_ID, text=msg)
-    await q.edit_message_text(f"✅ Вы взяли машину {c[0]}{' ('+c[1]+')' if c[1] else ''}")
-
-async def show_user_taken_cars(q):
-    u = q.from_user
-    with sqlite3.connect("garage.db") as conn:
-        if is_admin(u.id):
-            cars = conn.execute("SELECT id, name, plate FROM cars WHERE is_taken = 1").fetchall()
+    if data == "take_car":
+        await show_free_cars(context, user)
+    elif data == "return_car":
+        await show_user_taken_cars(context, user)
+    elif data == "history" and is_admin(user.id):
+        # История только в ЛС для админов
+        if chat_type == "private":
+            await show_history(context, user)
         else:
-            cars = conn.execute("SELECT id, name, plate FROM cars WHERE is_taken = 1 AND taken_by = ?", (u.id,)).fetchall()
-    if not cars:
-        await q.edit_message_text("У вас нет взятых машин." if not is_admin(u.id) else "Нет занятых машин.")
-        return
-    kb = [[InlineKeyboardButton(f"{n}{' ('+p+')' if p else ''}", callback_data=f"return_{i}")] for i, n, p in cars]
-    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")])
-    await q.edit_message_text("Выберите машину для возврата:", reply_markup=InlineKeyboardMarkup(kb))
+            msg = await context.bot.send_message(user.id, "📜 История доступна только в личных сообщениях")
+            asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+    elif data == "admin_panel" and is_admin(user.id):
+        # Админ-панель только в ЛС для админов
+        if chat_type == "private":
+            await admin_panel(context, user)
+        else:
+            msg = await context.bot.send_message(user.id, "⚙️ Админ-панель доступна только в личных сообщениях")
+            asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+    elif data.startswith("take_"):
+        await take_car(context, user, int(data.split("_")[1]))
+    elif data.startswith("return_"):
+        await ask_car_condition(context, user, int(data.split("_")[1]))
+    elif data.startswith("confirm_return_"):
+        parts = data.split("_")
+        await return_car(context, user, int(parts[2]), parts[3])
+    elif data == "admin_add_car" and is_admin(user.id):
+        msg = await context.bot.send_message(user.id, "✏️ Введи название машины:")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 5))
+        return CAR_NAME
+    elif data == "admin_remove_car" and is_admin(user.id):
+        await show_cars_for_remove(context, user)
+    elif data.startswith("remove_"):
+        await remove_car(context, user, int(data.split("_")[1]))
+    elif data == "admin_force_return" and is_admin(user.id):
+        await show_taken_cars_for_admin(context, user)
+    elif data.startswith("force_return_"):
+        await force_return_car(context, user, int(data.split("_")[2]))
+    elif data == "back_to_menu":
+        await back_to_menu(context, user, chat_type)
 
-async def ask_car_condition(q, car_id):
-    kb = [[InlineKeyboardButton("✅ Целая", callback_data=f"confirm_return_{car_id}_yes"),
-           InlineKeyboardButton("❌ Повреждена", callback_data=f"confirm_return_{car_id}_no")],
-          [InlineKeyboardButton("🔙 Отмена", callback_data="return_car")]]
-    await q.edit_message_text("Машина целая?", reply_markup=InlineKeyboardMarkup(kb))
-
-async def return_car(q, ctx, car_id, cond):
-    u = q.from_user
-    cond_text = "целая" if cond == "yes" else "с повреждениями"
-    with sqlite3.connect("garage.db") as conn:
-        c = conn.execute("SELECT name, plate, taken_by FROM cars WHERE id = ? AND is_taken = 1", (car_id,)).fetchone()
-        if not c:
-            await q.edit_message_text("❌ Машина не занята.")
+async def show_free_cars(context: ContextTypes.DEFAULT_TYPE, user):
+    """Показать свободные машины"""
+    try:
+        with sqlite3.connect("garage.db") as conn:
+            cars = conn.execute(
+                "SELECT id, name, plate FROM cars WHERE is_taken = 0"
+            ).fetchall()
+        
+        if not cars:
+            msg = await context.bot.send_message(user.id, "😕 **Все машины заняты**")
+            asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
             return
-        if not is_admin(u.id) and c[2] != u.id:
-            await q.edit_message_text("⛔ Это не ваша машина.")
+        
+        keyboard = []
+        for car_id, name, plate in cars:
+            plate_text = f" ({plate})" if plate else ""
+            keyboard.append([InlineKeyboardButton(
+                f"{name}{plate_text}",
+                callback_data=f"take_{car_id}"
+            )])
+        keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")])
+        
+        msg = await context.bot.send_message(
+            user.id,
+            "🚗 **Доступные машины:**",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 10))
+    except Exception as e:
+        logging.error(f"Ошибка показа машин: {e}")
+        msg = await context.bot.send_message(user.id, "❌ Ошибка загрузки списка")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+
+async def take_car(context: ContextTypes.DEFAULT_TYPE, user, car_id):
+    """Взять машину"""
+    try:
+        with sqlite3.connect("garage.db") as conn:
+            car = conn.execute(
+                "SELECT name, plate, is_taken FROM cars WHERE id = ?",
+                (car_id,)
+            ).fetchone()
+            
+            if not car or car[2] == 1:
+                msg = await context.bot.send_message(user.id, "❌ **Машина уже занята**")
+                asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+                return
+            
+            conn.execute(
+                "UPDATE cars SET is_taken = 1, taken_by = ?, taken_at = ? WHERE id = ?",
+                (user.id, datetime.now(), car_id)
+            )
+        
+        log_action(car_id, user.id, "take")
+        
+        car_name = car[0]
+        plate_text = f" ({car[1]})" if car[1] else ""
+        user_name = get_user_name(user)
+        
+        # Отправка в группу (С ИМЕНЕМ)
+        if TOPIC_ID:
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                message_thread_id=TOPIC_ID,
+                text=f"🚗 {user_name} взял машину {car_name}{plate_text}"
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                text=f"🚗 {user_name} взял машину {car_name}{plate_text}"
+            )
+        
+        msg = await context.bot.send_message(
+            user.id,
+            f"✅ **Ты взял:**\n{car_name}{plate_text}"
+        )
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+    except Exception as e:
+        logging.error(f"Ошибка взятия машины: {e}")
+        msg = await context.bot.send_message(user.id, "❌ Ошибка операции")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+
+async def show_user_taken_cars(context: ContextTypes.DEFAULT_TYPE, user):
+    """Показать взятые машины"""
+    try:
+        with sqlite3.connect("garage.db") as conn:
+            if is_admin(user.id):
+                cars = conn.execute(
+                    "SELECT id, name, plate FROM cars WHERE is_taken = 1"
+                ).fetchall()
+            else:
+                cars = conn.execute(
+                    "SELECT id, name, plate FROM cars WHERE is_taken = 1 AND taken_by = ?",
+                    (user.id,)
+                ).fetchall()
+        
+        if not cars:
+            msg = "Нет занятых машин" if is_admin(user.id) else "У тебя нет взятых машин"
+            msg_obj = await context.bot.send_message(user.id, f"ℹ️ **{msg}**")
+            asyncio.create_task(delete_after_delay(context, msg_obj.chat_id, msg_obj.message_id, 3))
             return
-        conn.execute("UPDATE cars SET is_taken = 0, taken_by = NULL, taken_at = NULL WHERE id = ?", (car_id,))
-    log_action(car_id, u.id, "return", cond)
-    msg = f"🔙 {get_user_name(u)} вернул машину {c[0]}{' ('+c[1]+')' if c[1] else ''} ({cond_text})"
-    if TOPIC_ID != 0:
-        await ctx.bot.send_message(chat_id=GROUP_CHAT_ID, message_thread_id=TOPIC_ID, text=msg)
-    else:
-        await ctx.bot.send_message(chat_id=GROUP_CHAT_ID, text=msg)
-    await q.edit_message_text(f"✅ Вы вернули машину {c[0]}{' ('+c[1]+')' if c[1] else ''} ({cond_text})")
+        
+        keyboard = []
+        for car_id, name, plate in cars:
+            plate_text = f" ({plate})" if plate else ""
+            keyboard.append([InlineKeyboardButton(
+                f"{name}{plate_text}",
+                callback_data=f"return_{car_id}"
+            )])
+        keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")])
+        
+        msg = await context.bot.send_message(
+            user.id,
+            "🔙 **Твои машины:**",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 10))
+    except Exception as e:
+        logging.error(f"Ошибка показа взятых машин: {e}")
+        msg = await context.bot.send_message(user.id, "❌ Ошибка загрузки")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def show_history(q):
-    with sqlite3.connect("garage.db") as conn:
-        r = conn.execute("""
-            SELECT h.timestamp, u.username, u.full_name, c.name, c.plate, h.action, h.condition
-            FROM history h JOIN cars c ON h.car_id = c.id LEFT JOIN users u ON h.user_id = u.user_id
-            ORDER BY h.timestamp DESC LIMIT 20
-        """).fetchall()
-    if not r:
-        await q.edit_message_text("История пуста.")
-        return
-    text = "📜 Последние действия:\n\n"
-    for ts, un, fn, cn, pl, act, cond in r:
-        ud = f"@{un}" if un else (fn or "Неизвестный")
-        if act == "take": at = "взял"
-        elif act == "return": at = f"вернул{' (целая)' if cond=='yes' else ' (повреждена)'}"
-        elif act == "force_return": at = "принудительно вернул"
-        else: at = act
-        text += f"{datetime.fromisoformat(ts).strftime('%d.%m %H:%M')} — {ud} {at} {cn}{' ('+pl+')' if pl else ''}\n"
-    await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]))
+async def ask_car_condition(context: ContextTypes.DEFAULT_TYPE, user, car_id):
+    """Спросить состояние машины"""
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Целая", callback_data=f"confirm_return_{car_id}_yes"),
+            InlineKeyboardButton("❌ Повреждена", callback_data=f"confirm_return_{car_id}_no")
+        ],
+        [InlineKeyboardButton("◀️ Отмена", callback_data="return_car")]
+    ]
+    msg = await context.bot.send_message(
+        user.id,
+        "❓ **Машина целая?**",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 10))
 
-async def admin_panel(q):
-    kb = [[InlineKeyboardButton("➕ Добавить машину", callback_data="admin_add_car")],
-          [InlineKeyboardButton("❌ Удалить машину", callback_data="admin_remove_car")],
-          [InlineKeyboardButton("⚠️ Принудительный возврат", callback_data="admin_force_return")],
-          [InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
-    await q.edit_message_text("⚙️ Админ-панель", reply_markup=InlineKeyboardMarkup(kb))
+async def return_car(context: ContextTypes.DEFAULT_TYPE, user, car_id, condition):
+    """Вернуть машину"""
+    condition_text = "✅ целая" if condition == "yes" else "⚠️ повреждена"
+    
+    try:
+        with sqlite3.connect("garage.db") as conn:
+            car = conn.execute(
+                "SELECT name, plate, taken_by FROM cars WHERE id = ? AND is_taken = 1",
+                (car_id,)
+            ).fetchone()
+            
+            if not car:
+                msg = await context.bot.send_message(user.id, "❌ **Машина не занята**")
+                asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+                return
+            
+            if not is_admin(user.id) and car[2] != user.id:
+                msg = await context.bot.send_message(user.id, "⛔ **Это не твоя машина**")
+                asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+                return
+            
+            conn.execute(
+                "UPDATE cars SET is_taken = 0, taken_by = NULL, taken_at = NULL WHERE id = ?",
+                (car_id,)
+            )
+        
+        log_action(car_id, user.id, "return", condition)
+        
+        car_name = car[0]
+        plate_text = f" ({car[1]})" if car[1] else ""
+        user_name = get_user_name(user)
+        
+        # Отправка в группу (С ИМЕНЕМ)
+        if TOPIC_ID:
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                message_thread_id=TOPIC_ID,
+                text=f"🔙 {user_name} вернул машину {car_name}{plate_text} ({condition_text})"
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                text=f"🔙 {user_name} вернул машину {car_name}{plate_text} ({condition_text})"
+            )
+        
+        msg = await context.bot.send_message(
+            user.id,
+            f"✅ **Ты вернул:**\n{car_name}{plate_text}\n\n📦 Состояние: {condition_text}"
+        )
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 5))
+    except Exception as e:
+        logging.error(f"Ошибка возврата: {e}")
+        msg = await context.bot.send_message(user.id, "❌ Ошибка операции")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+
+async def show_history(context: ContextTypes.DEFAULT_TYPE, user):
+    """Показать историю"""
+    try:
+        with sqlite3.connect("garage.db") as conn:
+            rows = conn.execute("""
+                SELECT h.timestamp, u.username, u.full_name, c.name, c.plate, h.action, h.condition
+                FROM history h
+                JOIN cars c ON h.car_id = c.id
+                LEFT JOIN users u ON h.user_id = u.user_id
+                ORDER BY h.timestamp DESC LIMIT 15
+            """).fetchall()
+        
+        if not rows:
+            msg = await context.bot.send_message(user.id, "📭 **История пуста**")
+            asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+            return
+        
+        text = "📜 **Последние действия:**\n\n"
+        for ts, username, full_name, car_name, plate, action, condition in rows:
+            user_disp = f"@{username}" if username else (full_name or "Неизвестный")
+            time_str = datetime.fromisoformat(ts).strftime("%d.%m %H:%M")
+            
+            if action == "take":
+                action_text = "🚗 взял"
+            elif action == "return":
+                cond = "✅ целая" if condition == "yes" else "⚠️ повреждена"
+                action_text = f"🔙 вернул ({cond})"
+            elif action == "force_return":
+                action_text = "⚡ принудительно"
+            else:
+                action_text = action
+            
+            plate_text = f" ({plate})" if plate else ""
+            text += f"• {time_str} — {user_disp} {action_text} {car_name}{plate_text}\n"
+        
+        msg = await context.bot.send_message(
+            user.id,
+            text,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")
+            ]])
+        )
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 15))
+    except Exception as e:
+        logging.error(f"Ошибка истории: {e}")
+        msg = await context.bot.send_message(user.id, "❌ Ошибка загрузки истории")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+
+async def admin_panel(context: ContextTypes.DEFAULT_TYPE, user):
+    """Админ-панель"""
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить машину", callback_data="admin_add_car")],
+        [InlineKeyboardButton("❌ Удалить машину", callback_data="admin_remove_car")],
+        [InlineKeyboardButton("⚡ Принудительный возврат", callback_data="admin_force_return")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")],
+    ]
+    msg = await context.bot.send_message(
+        user.id,
+        "⚙️ **Админ-панель**",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 15))
 
 async def add_car_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['new_car_name'] = update.message.text
-    await update.message.reply_text("Введите госномер (или '-' если нет):")
+    """Ввод названия машины"""
+    context.user_data["new_car_name"] = update.message.text
+    await safe_delete(context, update.effective_chat.id, update.message.message_id)
+    
+    msg = await update.effective_chat.send_message("🔤 **Введи госномер** (или '-' если нет):")
+    asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 5))
     return CAR_PLATE
 
 async def add_car_plate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ввод номера и сохранение"""
     plate = None if update.message.text == "-" else update.message.text
-    with sqlite3.connect("garage.db") as conn:
-        conn.execute("INSERT INTO cars (name, plate) VALUES (?, ?)", (context.user_data['new_car_name'], plate))
-    await update.message.reply_text(f"✅ Машина {context.user_data['new_car_name']} добавлена.")
-    await start(update, context)
+    name = context.user_data["new_car_name"]
+    await safe_delete(context, update.effective_chat.id, update.message.message_id)
+    
+    try:
+        with sqlite3.connect("garage.db") as conn:
+            conn.execute(
+                "INSERT INTO cars (name, plate) VALUES (?, ?)",
+                (name, plate)
+            )
+        msg = await update.effective_chat.send_message(f"✅ **Машина добавлена:** {name}")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+    except Exception as e:
+        logging.error(f"Ошибка добавления: {e}")
+        msg = await update.effective_chat.send_message("❌ Ошибка добавления")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+    
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Отменено.")
-    await start(update, context)
+    """Отмена действия"""
+    await safe_delete(context, update.effective_chat.id, update.message.message_id)
+    msg = await update.effective_chat.send_message("❌ **Отменено**")
+    asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
     return ConversationHandler.END
 
-async def show_cars_for_remove(q):
-    with sqlite3.connect("garage.db") as conn:
-        cars = conn.execute("SELECT id, name, plate, is_taken FROM cars ORDER BY name").fetchall()
-    if not cars:
-        await q.edit_message_text("Список пуст.")
-        return
-    kb = [[InlineKeyboardButton(f"{'🔴' if t else '🟢'} {n}{' ('+p+')' if p else ''}", callback_data=f"remove_{i}")] for i, n, p, t in cars]
-    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
-    await q.edit_message_text("Выберите машину для удаления:", reply_markup=InlineKeyboardMarkup(kb))
-
-async def remove_car(q, car_id):
-    with sqlite3.connect("garage.db") as conn:
-        n = conn.execute("SELECT name FROM cars WHERE id = ?", (car_id,)).fetchone()
-        if not n:
-            await q.edit_message_text("❌ Не найдено.")
+async def show_cars_for_remove(context: ContextTypes.DEFAULT_TYPE, user):
+    """Показать машины для удаления"""
+    try:
+        with sqlite3.connect("garage.db") as conn:
+            cars = conn.execute(
+                "SELECT id, name, plate, is_taken FROM cars ORDER BY name"
+            ).fetchall()
+        
+        if not cars:
+            msg = await context.bot.send_message(user.id, "📭 **Список пуст**")
+            asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
             return
-        conn.execute("DELETE FROM cars WHERE id = ?", (car_id,))
-        conn.execute("DELETE FROM history WHERE car_id = ?", (car_id,))
-    await q.edit_message_text(f"✅ Машина {n[0]} удалена.")
+        
+        keyboard = []
+        for car_id, name, plate, taken in cars:
+            status = "🔴" if taken else "🟢"
+            plate_text = f" ({plate})" if plate else ""
+            keyboard.append([InlineKeyboardButton(
+                f"{status} {name}{plate_text}",
+                callback_data=f"remove_{car_id}"
+            )])
+        keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")])
+        
+        msg = await context.bot.send_message(
+            user.id,
+            "🗑 **Выбери машину для удаления:**",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 15))
+    except Exception as e:
+        logging.error(f"Ошибка показа для удаления: {e}")
+        msg = await context.bot.send_message(user.id, "❌ Ошибка загрузки")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def show_taken_cars_for_admin(q):
-    with sqlite3.connect("garage.db") as conn:
-        cars = conn.execute("""
-            SELECT c.id, c.name, c.plate, u.username, u.full_name
-            FROM cars c LEFT JOIN users u ON c.taken_by = u.user_id
-            WHERE c.is_taken = 1
-        """).fetchall()
-    if not cars:
-        await q.edit_message_text("Нет занятых машин.")
-        return
-    kb = [[InlineKeyboardButton(f"{n}{' ('+p+')' if p else ''} (взял {('@'+un) if un else (fn or 'Неизвестный')})",
-                                 callback_data=f"force_return_{i}")] for i, n, p, un, fn in cars]
-    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")])
-    await q.edit_message_text("Выберите машину для принудительного возврата:", reply_markup=InlineKeyboardMarkup(kb))
+async def remove_car(context: ContextTypes.DEFAULT_TYPE, user, car_id):
+    """Удалить машину"""
+    try:
+        with sqlite3.connect("garage.db") as conn:
+            car = conn.execute(
+                "SELECT name FROM cars WHERE id = ?",
+                (car_id,)
+            ).fetchone()
+            
+            if not car:
+                msg = await context.bot.send_message(user.id, "❌ **Не найдено**")
+                asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+                return
+            
+            conn.execute("DELETE FROM cars WHERE id = ?", (car_id,))
+            conn.execute("DELETE FROM history WHERE car_id = ?", (car_id,))
+        
+        msg = await context.bot.send_message(user.id, f"✅ **Машина удалена:** {car[0]}")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+    except Exception as e:
+        logging.error(f"Ошибка удаления: {e}")
+        msg = await context.bot.send_message(user.id, "❌ Ошибка удаления")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def force_return_car(q, ctx, car_id):
-    a = q.from_user
-    with sqlite3.connect("garage.db") as conn:
-        c = conn.execute("SELECT name, plate, taken_by FROM cars WHERE id = ? AND is_taken = 1", (car_id,)).fetchone()
-        if not c:
-            await q.edit_message_text("❌ Машина не занята.")
+async def show_taken_cars_for_admin(context: ContextTypes.DEFAULT_TYPE, user):
+    """Показать занятые машины для админа"""
+    try:
+        with sqlite3.connect("garage.db") as conn:
+            cars = conn.execute("""
+                SELECT c.id, c.name, c.plate
+                FROM cars c
+                WHERE c.is_taken = 1
+            """).fetchall()
+        
+        if not cars:
+            msg = await context.bot.send_message(user.id, "ℹ️ **Нет занятых машин**")
+            asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
             return
-        conn.execute("UPDATE cars SET is_taken = 0, taken_by = NULL, taken_at = NULL WHERE id = ?", (car_id,))
-    log_action(car_id, a.id, "force_return")
-    msg = f"🔙 {get_user_name(a)} принудительно вернул машину {c[0]}{' ('+c[1]+')' if c[1] else ''}"
-    if TOPIC_ID != 0:
-        await ctx.bot.send_message(chat_id=GROUP_CHAT_ID, message_thread_id=TOPIC_ID, text=msg)
-    else:
-        await ctx.bot.send_message(chat_id=GROUP_CHAT_ID, text=msg)
-    await q.edit_message_text(f"✅ Машина {c[0]}{' ('+c[1]+')' if c[1] else ''} возвращена.")
+        
+        keyboard = []
+        for car_id, name, plate in cars:
+            plate_text = f" ({plate})" if plate else ""
+            keyboard.append([InlineKeyboardButton(
+                f"{name}{plate_text}",
+                callback_data=f"force_return_{car_id}"
+            )])
+        keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")])
+        
+        msg = await context.bot.send_message(
+            user.id,
+            "⚡ **Принудительный возврат:**",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 15))
+    except Exception as e:
+        logging.error(f"Ошибка показа занятых: {e}")
+        msg = await context.bot.send_message(user.id, "❌ Ошибка загрузки")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def back_to_menu(q):
-    u = q.from_user
-    kb = [[InlineKeyboardButton("🚗 Взять машину", callback_data="take_car")],
-          [InlineKeyboardButton("🔙 Вернуть машину", callback_data="return_car")]]
-    if is_admin(u.id):
-        kb.append([InlineKeyboardButton("📜 История", callback_data="history")])
-        kb.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
-    await q.edit_message_text("Добро пожаловать в гараж!", reply_markup=InlineKeyboardMarkup(kb))
+async def force_return_car(context: ContextTypes.DEFAULT_TYPE, admin, car_id):
+    """Принудительный возврат"""
+    try:
+        with sqlite3.connect("garage.db") as conn:
+            car = conn.execute(
+                "SELECT name, plate FROM cars WHERE id = ? AND is_taken = 1",
+                (car_id,)
+            ).fetchone()
+            
+            if not car:
+                msg = await context.bot.send_message(admin.id, "❌ **Машина не занята**")
+                asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+                return
+            
+            conn.execute(
+                "UPDATE cars SET is_taken = 0, taken_by = NULL, taken_at = NULL WHERE id = ?",
+                (car_id,)
+            )
+        
+        log_action(car_id, admin.id, "force_return")
+        
+        car_name = car[0]
+        plate_text = f" ({car[1]})" if car[1] else ""
+        admin_name = get_user_name(admin)
+        
+        # Отправка в группу (С ИМЕНЕМ)
+        if TOPIC_ID:
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                message_thread_id=TOPIC_ID,
+                text=f"⚡ {admin_name} принудительно вернул машину {car_name}{plate_text}"
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                text=f"⚡ {admin_name} принудительно вернул машину {car_name}{plate_text}"
+            )
+        
+        msg = await context.bot.send_message(
+            admin.id,
+            f"✅ **Машина возвращена:** {car_name}{plate_text}"
+        )
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+    except Exception as e:
+        logging.error(f"Ошибка принудительного возврата: {e}")
+        msg = await context.bot.send_message(admin.id, "❌ Ошибка операции")
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
+async def back_to_menu(context: ContextTypes.DEFAULT_TYPE, user, chat_type):
+    """Вернуться в главное меню"""
+    # Базовая клавиатура для всех
+    keyboard = [
+        [InlineKeyboardButton("🚗 Взять машину", callback_data="take_car")],
+        [InlineKeyboardButton("🔙 Вернуть машину", callback_data="return_car")],
+    ]
+    
+    # В личных сообщениях показываем админку, если пользователь админ
+    if chat_type == "private" and is_admin(user.id):
+        keyboard.append([InlineKeyboardButton("📜 История", callback_data="history")])
+        keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
+    
+    msg = await context.bot.send_message(
+        user.id,
+        "🚘 **Гараж**\nВыбери действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 10))
+
+# ========== НАСТРОЙКА ==========
 app = Application.builder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
+
+# Порядок обработчиков важен!
+app.add_handler(CommandHandler("cars", cars_command))
 app.add_handler(CallbackQueryHandler(button_handler))
 app.add_handler(ConversationHandler(
-    entry_points=[CallbackQueryHandler(button_handler, pattern="^admin_add_car$")],
-    states={CAR_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_car_name)],
-            CAR_PLATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_car_plate)]},
-    fallbacks=[CommandHandler("cancel", cancel)]
-))
-
-if __name__ == "__main__":
-    init_db()
-    app.run_polling()
