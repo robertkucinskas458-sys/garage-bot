@@ -26,10 +26,9 @@ if not admin_ids_str:
 ADMIN_IDS = [int(id.strip()) for id in admin_ids_str.split(",")]
 
 TOPIC_ID = os.getenv("TOPIC_ID")
-if TOPIC_ID:
-    TOPIC_ID = int(TOPIC_ID)
-else:
-    TOPIC_ID = None
+if not TOPIC_ID:
+    raise ValueError("❌ Ошибка: TOPIC_ID не найден!")
+TOPIC_ID = int(TOPIC_ID)
 
 CAR_NAME, CAR_PLATE = range(2)
 
@@ -168,23 +167,39 @@ def log_action(car_id, user_id, action, condition=None):
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
+# ========== МОДЕРАТОР ЧАТА ==========
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка всех сообщений в группе"""
+    # Если это не группа — пропускаем
     if update.effective_chat.type not in ["group", "supergroup"]:
         return
     
-    if TOPIC_ID and update.message.message_thread_id == TOPIC_ID:
+    # ЕСЛИ ЭТО НАШ ТОПИК — НЕ ТРОГАЕМ (можно писать всё что угодно)
+    if update.message.message_thread_id == TOPIC_ID:
         return
     
+    # Если это команда /cars в основном чате — удаляем и не запускаем
     if update.message.text and update.message.text.startswith("/cars"):
+        await safe_delete(context, update.effective_chat.id, update.message.message_id)
         return
     
+    # ВСЁ ОСТАЛЬНОЕ В ОСНОВНОМ ЧАТЕ — УДАЛЯЕМ И РУГАЕМСЯ
     await insult_user(context, update)
 
+# ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
 async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /cars - работает только в ЛС и в топике, в основном чате игнорится"""
+    chat_type = update.effective_chat.type
+    
+    # Если это группа и НЕ наш топик — удаляем и игнорим
+    if chat_type in ["group", "supergroup"] and update.message.message_thread_id != TOPIC_ID:
+        await safe_delete(context, update.effective_chat.id, update.message.message_id)
+        return
+    
+    # Удаляем сообщение с командой
     await safe_delete(context, update.effective_chat.id, update.message.message_id)
     
     user = update.effective_user
-    chat_type = update.effective_chat.type
     save_user_info(user)
     
     keyboard = [
@@ -307,17 +322,12 @@ async def take_car(context: ContextTypes.DEFAULT_TYPE, user, car_id):
         plate_text = f" ({car[1]})" if car[1] else ""
         user_name = get_user_name(user)
         
-        if TOPIC_ID:
-            await context.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                message_thread_id=TOPIC_ID,
-                text=f"🚗 {user_name} взял машину {car_name}{plate_text}"
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                text=f"🚗 {user_name} взял машину {car_name}{plate_text}"
-            )
+        # Отправляем ТОЛЬКО в топик
+        await context.bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            message_thread_id=TOPIC_ID,
+            text=f"🚗 {user_name} взял машину {car_name}{plate_text}"
+        )
         
         msg = await context.bot.send_message(
             user.id,
@@ -414,17 +424,12 @@ async def return_car(context: ContextTypes.DEFAULT_TYPE, user, car_id, condition
         plate_text = f" ({car[1]})" if car[1] else ""
         user_name = get_user_name(user)
         
-        if TOPIC_ID:
-            await context.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                message_thread_id=TOPIC_ID,
-                text=f"🔙 {user_name} вернул машину {car_name}{plate_text} ({condition_text})"
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                text=f"🔙 {user_name} вернул машину {car_name}{plate_text} ({condition_text})"
-            )
+        # Отправляем ТОЛЬКО в топик
+        await context.bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            message_thread_id=TOPIC_ID,
+            text=f"🔙 {user_name} вернул машину {car_name}{plate_text} ({condition_text})"
+        )
         
         msg = await context.bot.send_message(
             user.id,
@@ -645,17 +650,12 @@ async def force_return_car(context: ContextTypes.DEFAULT_TYPE, admin, car_id):
         plate_text = f" ({car[1]})" if car[1] else ""
         admin_name = get_user_name(admin)
         
-        if TOPIC_ID:
-            await context.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                message_thread_id=TOPIC_ID,
-                text=f"⚡ {admin_name} принудительно вернул машину {car_name}{plate_text}"
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                text=f"⚡ {admin_name} принудительно вернул машину {car_name}{plate_text}"
-            )
+        # Отправляем ТОЛЬКО в топик
+        await context.bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            message_thread_id=TOPIC_ID,
+            text=f"⚡ {admin_name} принудительно вернул машину {car_name}{plate_text}"
+        )
         
         msg = await context.bot.send_message(
             admin.id,
