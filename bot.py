@@ -37,20 +37,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# ========== РУГАТЕЛЬСТВА (10 вариантов) ==========
-INSULTS = [
-    "⚠️ **{} сюда писать нельзя, долбаеб!**",
-    "⚠️ **{} ты че, самый умный? По теме пиши!**",
-    "⚠️ **{} еще одно такое сообщение — пизды получишь!**",
-    "⚠️ **{} для тебя специально тему создали, мудак!**",
-    "⚠️ **{} руки из жопы? Сюда нельзя писать!**",
-    "⚠️ **{} ты вообще читать умеешь? Только по теме!**",
-    "⚠️ **{} за такие сообщения по ебалу дают!**",
-    "⚠️ **{} иди нахуй отсюда со своим флудом!**",
-    "⚠️ **{} тему видишь? Туда пиши, дебил!**",
-    "⚠️ **{} последнее предупреждение, урод!**",
-]
-
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 async def delete_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, delay: int = 3):
     """Удалить сообщение через указанное количество секунд"""
@@ -80,22 +66,6 @@ def get_user_name(user):
         return f"@{user.username}"
     else:
         return user.full_name or str(user.id)
-
-async def insult_user(context: ContextTypes.DEFAULT_TYPE, update: Update):
-    """Поругать пользователя и удалить его сообщение"""
-    user = update.effective_user
-    mention = get_user_mention(user)
-    
-    await safe_delete(context, update.effective_chat.id, update.message.message_id)
-    
-    insult_template = random.choice(INSULTS)
-    insult = insult_template.format(mention)
-    
-    msg = await update.effective_chat.send_message(
-        insult,
-        parse_mode="Markdown"
-    )
-    asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 5))
 
 def init_db():
     """Инициализация базы данных"""
@@ -167,37 +137,20 @@ def log_action(car_id, user_id, action, condition=None):
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
-# ========== МОДЕРАТОР ЧАТА ==========
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка всех сообщений в группе"""
-    # Если это не группа — пропускаем
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        return
-    
-    # ЕСЛИ ЭТО НАШ ТОПИК — НЕ ТРОГАЕМ (можно писать всё что угодно)
-    if update.message.message_thread_id == TOPIC_ID:
-        return
-    
-    # Если это команда /cars в основном чате — удаляем и не запускаем
-    if update.message.text and update.message.text.startswith("/cars"):
-        await safe_delete(context, update.effective_chat.id, update.message.message_id)
-        return
-    
-    # ВСЁ ОСТАЛЬНОЕ В ОСНОВНОМ ЧАТЕ — УДАЛЯЕМ И РУГАЕМСЯ
-    await insult_user(context, update)
-
 # ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
 async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /cars - работает только в ЛС и в топике, в основном чате игнорится"""
+    """Команда /cars - работает только в ЛС и в топике 318450"""
     chat_type = update.effective_chat.type
+    message = update.message
     
-    # Если это группа и НЕ наш топик — удаляем и игнорим
-    if chat_type in ["group", "supergroup"] and update.message.message_thread_id != TOPIC_ID:
-        await safe_delete(context, update.effective_chat.id, update.message.message_id)
-        return
+    # Если это группа - проверяем, что это наш топик
+    if chat_type in ["group", "supergroup"]:
+        # Если это не наш топик - просто игнорируем (ничего не делаем)
+        if message.message_thread_id != TOPIC_ID:
+            return
     
     # Удаляем сообщение с командой
-    await safe_delete(context, update.effective_chat.id, update.message.message_id)
+    await safe_delete(context, message.chat_id, message.message_id)
     
     user = update.effective_user
     save_user_info(user)
@@ -211,7 +164,7 @@ async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("📜 История", callback_data="history")])
         keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
     
-    msg = await update.effective_chat.send_message(
+    msg = await message.chat.send_message(
         "🚘 **Гараж**\nВыбери действие:",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
@@ -322,7 +275,7 @@ async def take_car(context: ContextTypes.DEFAULT_TYPE, user, car_id):
         plate_text = f" ({car[1]})" if car[1] else ""
         user_name = get_user_name(user)
         
-        # Отправляем ТОЛЬКО в топик
+        # Отправляем ТОЛЬКО в топик 318450
         await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
             message_thread_id=TOPIC_ID,
@@ -424,7 +377,7 @@ async def return_car(context: ContextTypes.DEFAULT_TYPE, user, car_id, condition
         plate_text = f" ({car[1]})" if car[1] else ""
         user_name = get_user_name(user)
         
-        # Отправляем ТОЛЬКО в топик
+        # Отправляем ТОЛЬКО в топик 318450
         await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
             message_thread_id=TOPIC_ID,
@@ -650,7 +603,7 @@ async def force_return_car(context: ContextTypes.DEFAULT_TYPE, admin, car_id):
         plate_text = f" ({car[1]})" if car[1] else ""
         admin_name = get_user_name(admin)
         
-        # Отправляем ТОЛЬКО в топик
+        # Отправляем ТОЛЬКО в топик 318450
         await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
             message_thread_id=TOPIC_ID,
@@ -697,10 +650,11 @@ app.add_handler(ConversationHandler(
     },
     fallbacks=[CommandHandler("cancel", cancel)]
 ))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+
+# В группе НЕТ обработчика обычных сообщений - бот ничего не делает в основном чате
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
     init_db()
-    print("🚀 Бот запущен с командой /cars и модерацией чата...")
+    print("🚀 Бот запущен - работает только в топике 318450 и в ЛС...")
     app.run_polling()
