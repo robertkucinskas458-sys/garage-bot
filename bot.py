@@ -140,6 +140,11 @@ def log_action(car_id, user_id, action, condition=None):
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
+# ========== ОБРАБОТЧИК /start (ничего не удаляем, просто оставляем как есть) ==========
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Просто ничего не делаем, команда остаётся
+    pass
+
 # ========== МОДЕРАТОР ТОПИКА ==========
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type not in ["group", "supergroup"]:
@@ -152,6 +157,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if update.message.text and update.message.text.startswith("/cars"):
         return
+    if update.message.text and update.message.text.startswith("/start"):
+        return
     await insult_user(context, update)
 
 # ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
@@ -160,6 +167,9 @@ async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     chat_id = update.effective_chat.id
     user = update.effective_user
+
+    # Сразу удаляем команду /cars
+    await safe_delete(context, chat_id, message.message_id)
 
     if chat_type == "private":
         if is_admin(user.id):
@@ -513,6 +523,7 @@ async def back_to_menu(context, user):
 
 # ========== НАСТРОЙКА ==========
 app = Application.builder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start_command))
 app.add_handler(CommandHandler("cars", cars_command))
 app.add_handler(CallbackQueryHandler(button_handler))
 app.add_handler(ConversationHandler(
@@ -529,3 +540,4 @@ if __name__ == "__main__":
     init_db()
     print("🚀 Бот запущен...")
     app.run_polling()
+    
