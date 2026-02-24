@@ -34,6 +34,7 @@ CAR_NAME, CAR_PLATE = range(2)
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
+# ========== РУГАТЕЛЬСТВА (10 вариантов) ==========
 INSULTS = [
     "⚠️ **{} сюда писать нельзя, долбаеб!**",
     "⚠️ **{} ты че, самый умный? По теме пиши!**",
@@ -75,8 +76,8 @@ async def insult_user(context, update):
     mention = get_user_mention(user)
     await safe_delete(context, update.effective_chat.id, update.message.message_id)
     insult = random.choice(INSULTS).format(mention)
-    msg = await update.effective_chat.send_message(insult, parse_mode="Markdown")
-    asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 5))
+    await update.effective_chat.send_message(insult, parse_mode="Markdown")
+    # НЕ УДАЛЯЕМ сообщение с ругательством
 
 def init_db():
     conn = sqlite3.connect("garage.db")
@@ -148,9 +149,12 @@ def is_admin(user_id):
 
 # ========== МОДЕРАТОР ТОПИКА ==========
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Проверяем, что это наша группа и наш топик
     if update.effective_chat.id == GROUP_CHAT_ID and update.message.message_thread_id == TOPIC_ID:
+        # Команду /cars пропускаем
         if update.message.text and update.message.text.startswith("/cars"):
             return
+        # Всё остальное в топике — ругаемся, НО НЕ УДАЛЯЕМ
         await insult_user(context, update)
         return
 
@@ -175,7 +179,6 @@ async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("📜 История", callback_data="history")])
         keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
 
-    # ОТПРАВЛЯЕМ СООБЩЕНИЕ В ТОТ ЖЕ ЧАТ (в топик)
     msg = await context.bot.send_message(
         chat_id=chat_id,
         message_thread_id=message.message_thread_id if chat_type in ["group", "supergroup"] else None,
