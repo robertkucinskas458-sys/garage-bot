@@ -175,8 +175,11 @@ async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("📜 История", callback_data="history")])
         keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
 
-    msg = await message.chat.send_message(
-        "🚘 **Гараж**\nВыбери действие:",
+    # ОТПРАВЛЯЕМ СООБЩЕНИЕ В ТОТ ЖЕ ЧАТ (в топик)
+    msg = await context.bot.send_message(
+        chat_id=chat_id,
+        message_thread_id=message.message_thread_id if chat_type in ["group", "supergroup"] else None,
+        text="🚘 **Гараж**\nВыбери действие:",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
@@ -188,6 +191,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     data = query.data
     chat_type = query.message.chat.type
+    chat_id = query.message.chat.id
+    message_thread_id = query.message.message_thread_id
 
     await safe_delete(context, query.message.chat_id, query.message.message_id)
 
