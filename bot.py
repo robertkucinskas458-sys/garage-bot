@@ -10,15 +10,17 @@ from telegram.ext import (
     filters, ContextTypes, ConversationHandler
 )
 
+# ==== ДАННЫЕ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ====
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
-    raise ValueError("TOKEN not found")
+    raise ValueError("❌ TOKEN не найден! Добавь в переменные окружения")
 
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS")
 if not ADMIN_IDS_STR:
-    raise ValueError("ADMIN_IDS not found")
+    raise ValueError("❌ ADMIN_IDS не найден! Добавь в переменные окружения")
 ADMIN_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(",")]
 
+# ==== ТВОИ ПОСТОЯННЫЕ ДАННЫЕ (не меняй) ====
 GROUP_CHAT_ID = -1002331168240
 TOPIC_ID = 318450
 
@@ -26,6 +28,7 @@ CAR_NAME, CAR_PLATE = range(2)
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
+# ==== РУГАТЕЛЬСТВА (10 вариантов) ====
 INSULTS = [
     "⚠️ **{} сюда писать нельзя, долбаеб!**",
     "⚠️ **{} ты че, самый умный? По теме пиши!**",
@@ -39,14 +42,14 @@ INSULTS = [
     "⚠️ **{} последнее предупреждение, урод!**",
 ]
 
-async def delete_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, delay: int = 3):
+async def delete_after_delay(context, chat_id, message_id, delay=3):
     await asyncio.sleep(delay)
     try:
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
     except:
         pass
 
-async def safe_delete(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
+async def safe_delete(context, chat_id, message_id):
     try:
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
     except:
@@ -55,16 +58,14 @@ async def safe_delete(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_
 def get_user_mention(user):
     if user.username:
         return f"@{user.username}"
-    else:
-        return f"[{user.full_name}](tg://user?id={user.id})"
+    return f"[{user.full_name}](tg://user?id={user.id})"
 
 def get_user_name(user):
     if user.username:
         return f"@{user.username}"
-    else:
-        return user.full_name or str(user.id)
+    return user.full_name or str(user.id)
 
-async def insult_user(context: ContextTypes.DEFAULT_TYPE, update: Update):
+async def insult_user(context, update):
     user = update.effective_user
     mention = get_user_mention(user)
     await safe_delete(context, update.effective_chat.id, update.message.message_id)
@@ -114,7 +115,6 @@ def init_db():
     ]
     for name, plate in cars:
         c.execute("INSERT OR IGNORE INTO cars (name, plate) VALUES (?, ?)", (name, plate))
-    
     conn.commit()
     conn.close()
 
@@ -143,51 +143,44 @@ def is_admin(user_id):
 
 # ========== МОДЕРАТОР ТОПИКА ==========
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Проверяем, что это наша группа и наш топик
+    # Только наша группа и наш топик
     if update.effective_chat.id == GROUP_CHAT_ID and update.message.message_thread_id == TOPIC_ID:
-        # Если это команда /cars в топике - пропускаем (обработается отдельно)
+        # Команду /cars не трогаем
         if update.message.text and update.message.text.startswith("/cars"):
             return
-        
-        # Всё остальное в топике - удаляем и ругаемся
+        # Всё остальное в топике — удаляем и ругаемся
         await insult_user(context, update)
         return
-    
-    # ВСЕ ОСТАЛЬНЫЕ ЧАТЫ И ТЕМЫ - ИГНОРИРУЕМ ПОЛНОСТЬЮ
-    # Бот ничего не делает в других местах
+    # ВСЕ остальные чаты и темы — игнорируем (бот ничего не делает)
 
 # ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
 async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.effective_chat.type
     message = update.message
     chat_id = update.effective_chat.id
-    
+
     # Если это группа
     if chat_type in ["group", "supergroup"]:
-        # Проверяем, что это наша группа и наш топик
+        # Работаем только в нашем топике, иначе игнорируем
         if chat_id != GROUP_CHAT_ID or message.message_thread_id != TOPIC_ID:
-            # Если не наш топик - просто игнорируем (ничего не делаем)
             return
-    
-    # Если дошли сюда - значит команда в ЛС или в нужном топике
+
     user = update.effective_user
     save_user_info(user)
-    
+
     keyboard = [
         [InlineKeyboardButton("🚗 Взять машину", callback_data="take_car")],
         [InlineKeyboardButton("🔙 Вернуть машину", callback_data="return_car")],
     ]
-    
     if chat_type == "private" and is_admin(user.id):
         keyboard.append([InlineKeyboardButton("📜 История", callback_data="history")])
         keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
-    
+
     msg = await message.chat.send_message(
         "🚘 **Гараж**\nВыбери действие:",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
-    
     asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 5))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -237,7 +230,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "back_to_menu":
         await back_to_menu(context, user, chat_type)
 
-async def show_free_cars(context: ContextTypes.DEFAULT_TYPE, user):
+async def show_free_cars(context, user):
     try:
         with sqlite3.connect("garage.db") as conn:
             cars = conn.execute("SELECT id, name, plate FROM cars WHERE is_taken = 0").fetchall()
@@ -257,7 +250,7 @@ async def show_free_cars(context: ContextTypes.DEFAULT_TYPE, user):
         msg = await context.bot.send_message(user.id, "❌ Ошибка загрузки")
         asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def take_car(context: ContextTypes.DEFAULT_TYPE, user, car_id):
+async def take_car(context, user, car_id):
     try:
         with sqlite3.connect("garage.db") as conn:
             car = conn.execute("SELECT name, plate, is_taken FROM cars WHERE id = ?", (car_id,)).fetchone()
@@ -280,7 +273,7 @@ async def take_car(context: ContextTypes.DEFAULT_TYPE, user, car_id):
         msg = await context.bot.send_message(user.id, "❌ Ошибка операции")
         asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def show_user_taken_cars(context: ContextTypes.DEFAULT_TYPE, user):
+async def show_user_taken_cars(context, user):
     try:
         with sqlite3.connect("garage.db") as conn:
             if is_admin(user.id):
@@ -304,7 +297,7 @@ async def show_user_taken_cars(context: ContextTypes.DEFAULT_TYPE, user):
         msg = await context.bot.send_message(user.id, "❌ Ошибка загрузки")
         asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def ask_car_condition(context: ContextTypes.DEFAULT_TYPE, user, car_id):
+async def ask_car_condition(context, user, car_id):
     keyboard = [
         [InlineKeyboardButton("✅ Целая", callback_data=f"confirm_return_{car_id}_yes"),
          InlineKeyboardButton("❌ Повреждена", callback_data=f"confirm_return_{car_id}_no")],
@@ -313,7 +306,7 @@ async def ask_car_condition(context: ContextTypes.DEFAULT_TYPE, user, car_id):
     msg = await context.bot.send_message(user.id, "❓ **Машина целая?**", reply_markup=InlineKeyboardMarkup(keyboard))
     asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 10))
 
-async def return_car(context: ContextTypes.DEFAULT_TYPE, user, car_id, condition):
+async def return_car(context, user, car_id, condition):
     condition_text = "✅ целая" if condition == "yes" else "⚠️ повреждена"
     try:
         with sqlite3.connect("garage.db") as conn:
@@ -340,7 +333,7 @@ async def return_car(context: ContextTypes.DEFAULT_TYPE, user, car_id, condition
         msg = await context.bot.send_message(user.id, "❌ Ошибка операции")
         asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def show_history(context: ContextTypes.DEFAULT_TYPE, user):
+async def show_history(context, user):
     try:
         with sqlite3.connect("garage.db") as conn:
             rows = conn.execute("""
@@ -375,7 +368,7 @@ async def show_history(context: ContextTypes.DEFAULT_TYPE, user):
         msg = await context.bot.send_message(user.id, "❌ Ошибка загрузки")
         asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def admin_panel(context: ContextTypes.DEFAULT_TYPE, user):
+async def admin_panel(context, user):
     keyboard = [
         [InlineKeyboardButton("➕ Добавить машину", callback_data="admin_add_car")],
         [InlineKeyboardButton("❌ Удалить машину", callback_data="admin_remove_car")],
@@ -413,7 +406,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
     return ConversationHandler.END
 
-async def show_cars_for_remove(context: ContextTypes.DEFAULT_TYPE, user):
+async def show_cars_for_remove(context, user):
     try:
         with sqlite3.connect("garage.db") as conn:
             cars = conn.execute("SELECT id, name, plate, is_taken FROM cars ORDER BY name").fetchall()
@@ -434,7 +427,7 @@ async def show_cars_for_remove(context: ContextTypes.DEFAULT_TYPE, user):
         msg = await context.bot.send_message(user.id, "❌ Ошибка загрузки")
         asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def remove_car(context: ContextTypes.DEFAULT_TYPE, user, car_id):
+async def remove_car(context, user, car_id):
     try:
         with sqlite3.connect("garage.db") as conn:
             car = conn.execute("SELECT name FROM cars WHERE id = ?", (car_id,)).fetchone()
@@ -451,7 +444,7 @@ async def remove_car(context: ContextTypes.DEFAULT_TYPE, user, car_id):
         msg = await context.bot.send_message(user.id, "❌ Ошибка удаления")
         asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def show_taken_cars_for_admin(context: ContextTypes.DEFAULT_TYPE, user):
+async def show_taken_cars_for_admin(context, user):
     try:
         with sqlite3.connect("garage.db") as conn:
             cars = conn.execute("SELECT c.id, c.name, c.plate FROM cars c WHERE c.is_taken = 1").fetchall()
@@ -471,7 +464,7 @@ async def show_taken_cars_for_admin(context: ContextTypes.DEFAULT_TYPE, user):
         msg = await context.bot.send_message(user.id, "❌ Ошибка загрузки")
         asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def force_return_car(context: ContextTypes.DEFAULT_TYPE, admin, car_id):
+async def force_return_car(context, admin, car_id):
     try:
         with sqlite3.connect("garage.db") as conn:
             car = conn.execute("SELECT name, plate FROM cars WHERE id = ? AND is_taken = 1", (car_id,)).fetchone()
@@ -493,7 +486,7 @@ async def force_return_car(context: ContextTypes.DEFAULT_TYPE, admin, car_id):
         msg = await context.bot.send_message(admin.id, "❌ Ошибка операции")
         asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def back_to_menu(context: ContextTypes.DEFAULT_TYPE, user, chat_type):
+async def back_to_menu(context, user, chat_type):
     keyboard = [
         [InlineKeyboardButton("🚗 Взять машину", callback_data="take_car")],
         [InlineKeyboardButton("🔙 Вернуть машину", callback_data="return_car")],
@@ -504,6 +497,7 @@ async def back_to_menu(context: ContextTypes.DEFAULT_TYPE, user, chat_type):
     msg = await context.bot.send_message(user.id, "🚘 **Гараж**\nВыбери действие:", reply_markup=InlineKeyboardMarkup(keyboard))
     asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 10))
 
+# ========== НАСТРОЙКА ==========
 app = Application.builder().token(TOKEN).build()
 app.add_handler(CommandHandler("cars", cars_command))
 app.add_handler(CallbackQueryHandler(button_handler))
