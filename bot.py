@@ -141,30 +141,35 @@ def log_action(car_id, user_id, action, condition=None):
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
+# ========== МОДЕРАТОР ТОПИКА ==========
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type not in ["group", "supergroup"]:
+    # Проверяем, что это наша группа и наш топик
+    if update.effective_chat.id == GROUP_CHAT_ID and update.message.message_thread_id == TOPIC_ID:
+        # Если это команда /cars в топике - пропускаем (обработается отдельно)
+        if update.message.text and update.message.text.startswith("/cars"):
+            return
+        
+        # Всё остальное в топике - удаляем и ругаемся
+        await insult_user(context, update)
         return
-    if update.effective_chat.id != GROUP_CHAT_ID:
-        return
-    if update.message.message_thread_id == TOPIC_ID:
-        return
-    if update.message.text and update.message.text.startswith("/cars"):
-        await safe_delete(context, update.effective_chat.id, update.message.message_id)
-        return
-    await insult_user(context, update)
+    
+    # ВСЕ ОСТАЛЬНЫЕ ЧАТЫ И ТЕМЫ - ИГНОРИРУЕМ ПОЛНОСТЬЮ
+    # Бот ничего не делает в других местах
 
+# ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
 async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.effective_chat.type
     message = update.message
     chat_id = update.effective_chat.id
     
+    # Если это группа
     if chat_type in ["group", "supergroup"]:
-        if chat_id != GROUP_CHAT_ID:
-            return
-        if message.message_thread_id != TOPIC_ID:
-            await safe_delete(context, chat_id, message.message_id)
+        # Проверяем, что это наша группа и наш топик
+        if chat_id != GROUP_CHAT_ID or message.message_thread_id != TOPIC_ID:
+            # Если не наш топик - просто игнорируем (ничего не делаем)
             return
     
+    # Если дошли сюда - значит команда в ЛС или в нужном топике
     user = update.effective_user
     save_user_info(user)
     
