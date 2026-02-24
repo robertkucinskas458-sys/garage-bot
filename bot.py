@@ -10,19 +10,25 @@ from telegram.ext import (
     filters, ContextTypes, ConversationHandler
 )
 
-# ==== ДАННЫЕ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ====
+# ==== ВСЕ ДАННЫЕ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ====
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
-    raise ValueError("❌ TOKEN не найден! Добавь в переменные окружения")
+    raise ValueError("❌ TOKEN не найден! Добавь TOKEN в переменные окружения")
+
+GROUP_CHAT_ID_STR = os.getenv("GROUP_CHAT_ID")
+if not GROUP_CHAT_ID_STR:
+    raise ValueError("❌ GROUP_CHAT_ID не найден! Добавь GROUP_CHAT_ID в переменные окружения")
+GROUP_CHAT_ID = int(GROUP_CHAT_ID_STR)
+
+TOPIC_ID_STR = os.getenv("TOPIC_ID")
+if not TOPIC_ID_STR:
+    raise ValueError("❌ TOPIC_ID не найден! Добавь TOPIC_ID в переменные окружения")
+TOPIC_ID = int(TOPIC_ID_STR)
 
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS")
 if not ADMIN_IDS_STR:
-    raise ValueError("❌ ADMIN_IDS не найден! Добавь в переменные окружения")
+    raise ValueError("❌ ADMIN_IDS не найден! Добавь ADMIN_IDS в переменные окружения")
 ADMIN_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(",")]
-
-# ==== ТВОИ ПОСТОЯННЫЕ ДАННЫЕ ====
-GROUP_CHAT_ID = -1002331168240
-TOPIC_ID = 318450
 
 CAR_NAME, CAR_PLATE = range(2)
 
