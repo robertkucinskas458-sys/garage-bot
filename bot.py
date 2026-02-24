@@ -72,7 +72,9 @@ def get_user_name(user):
 async def insult_user(context, update):
     user = update.effective_user
     mention = get_user_mention(user)
+    # Удаляем сообщение пользователя
     await safe_delete(context, update.effective_chat.id, update.message.message_id)
+    # Отправляем ругательство (НЕ УДАЛЯЕМ его)
     insult = random.choice(INSULTS).format(mention)
     await update.effective_chat.send_message(insult, parse_mode="Markdown")
 
@@ -140,10 +142,9 @@ def log_action(car_id, user_id, action, condition=None):
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
-# ========== ОБРАБОТЧИК /start (ничего не удаляем, просто оставляем как есть) ==========
+# ========== ОБРАБОТЧИК /start (оставляем) ==========
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Просто ничего не делаем, команда остаётся
-    pass
+    pass  # Ничего не делаем, команда остаётся
 
 # ========== МОДЕРАТОР ТОПИКА ==========
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -159,6 +160,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if update.message.text and update.message.text.startswith("/start"):
         return
+    # Всё остальное в топике — ругаемся (удаляем сообщение пользователя, НО НЕ своё)
     await insult_user(context, update)
 
 # ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
@@ -168,7 +170,7 @@ async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = update.effective_user
 
-    # Сразу удаляем команду /cars
+    # Удаляем команду /cars
     await safe_delete(context, chat_id, message.message_id)
 
     if chat_type == "private":
@@ -540,4 +542,3 @@ if __name__ == "__main__":
     init_db()
     print("🚀 Бот запущен...")
     app.run_polling()
-    
