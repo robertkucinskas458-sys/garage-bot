@@ -10,31 +10,29 @@ from telegram.ext import (
     filters, ContextTypes, ConversationHandler
 )
 
-# ==== ВСЕ ДАННЫЕ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ====
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
-    raise ValueError("❌ TOKEN не найден! Добавь TOKEN в переменные окружения")
+    raise ValueError("❌ TOKEN не найден!")
 
 GROUP_CHAT_ID_STR = os.getenv("GROUP_CHAT_ID")
 if not GROUP_CHAT_ID_STR:
-    raise ValueError("❌ GROUP_CHAT_ID не найден! Добавь GROUP_CHAT_ID в переменные окружения")
+    raise ValueError("❌ GROUP_CHAT_ID не найден!")
 GROUP_CHAT_ID = int(GROUP_CHAT_ID_STR)
 
 TOPIC_ID_STR = os.getenv("TOPIC_ID")
 if not TOPIC_ID_STR:
-    raise ValueError("❌ TOPIC_ID не найден! Добавь TOPIC_ID в переменные окружения")
+    raise ValueError("❌ TOPIC_ID не найден!")
 TOPIC_ID = int(TOPIC_ID_STR)
 
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS")
 if not ADMIN_IDS_STR:
-    raise ValueError("❌ ADMIN_IDS не найден! Добавь ADMIN_IDS в переменные окружения")
+    raise ValueError("❌ ADMIN_IDS не найден!")
 ADMIN_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(",")]
 
 CAR_NAME, CAR_PLATE = range(2)
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# ========== РУГАТЕЛЬСТВА (10 вариантов) ==========
 INSULTS = [
     "⚠️ **{} сюда писать нельзя, долбаеб!**",
     "⚠️ **{} ты че, самый умный? По теме пиши!**",
@@ -77,7 +75,6 @@ async def insult_user(context, update):
     await safe_delete(context, update.effective_chat.id, update.message.message_id)
     insult = random.choice(INSULTS).format(mention)
     await update.effective_chat.send_message(insult, parse_mode="Markdown")
-    # НЕ УДАЛЯЕМ сообщение с ругательством
 
 def init_db():
     conn = sqlite3.connect("garage.db")
@@ -127,20 +124,16 @@ def init_db():
 def save_user_info(user):
     try:
         with sqlite3.connect("garage.db") as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO users (user_id, username, full_name) VALUES (?, ?, ?)",
-                (user.id, user.username, user.full_name)
-            )
+            conn.execute("INSERT OR REPLACE INTO users (user_id, username, full_name) VALUES (?, ?, ?)",
+                         (user.id, user.username, user.full_name))
     except:
         pass
 
 def log_action(car_id, user_id, action, condition=None):
     try:
         with sqlite3.connect("garage.db") as conn:
-            conn.execute(
-                "INSERT INTO history (car_id, user_id, action, condition, timestamp) VALUES (?, ?, ?, ?, ?)",
-                (car_id, user_id, action, condition, datetime.now())
-            )
+            conn.execute("INSERT INTO history (car_id, user_id, action, condition, timestamp) VALUES (?, ?, ?, ?, ?)",
+                         (car_id, user_id, action, condition, datetime.now()))
     except:
         pass
 
@@ -149,14 +142,15 @@ def is_admin(user_id):
 
 # ========== МОДЕРАТОР ТОПИКА ==========
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Проверяем, что это наша группа и наш топик
-    if update.effective_chat.id == GROUP_CHAT_ID and update.message.message_thread_id == TOPIC_ID:
-        # Команду /cars пропускаем
-        if update.message.text and update.message.text.startswith("/cars"):
-            return
-        # Всё остальное в топике — ругаемся, НО НЕ УДАЛЯЕМ
-        await insult_user(context, update)
+    if update.effective_chat.type not in ["group", "supergroup"]:
         return
+    if update.effective_chat.id != GROUP_CHAT_ID:
+        return
+    if update.message.message_thread_id != TOPIC_ID:
+        return
+    if update.message.text and update.message.text.startswith("/cars"):
+        return
+    await insult_user(context, update)
 
 # ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
 async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -164,29 +158,45 @@ async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     chat_id = update.effective_chat.id
 
+    # В ЛС — только админка, без кнопок с машинами
+    if chat_type == "private":
+        if is_admin(update.effective_user.id):
+            # Админу показываем только админ-панель
+            keyboard = [
+                [InlineKeyboardButton("📜 История", callback_data="history")],
+                [InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")],
+            ]
+            msg = await message.chat.send_message(
+                "👑 **Админ-панель**\nВыбери действие:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+            asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 5))
+        # Не-админам в ЛС ничего не показываем
+        return
+
+    # В группе — только наш топик
     if chat_type in ["group", "supergroup"]:
         if chat_id != GROUP_CHAT_ID or message.message_thread_id != TOPIC_ID:
             return
 
-    user = update.effective_user
-    save_user_info(user)
+        # В топике показываем кнопки с машинами всем
+        user = update.effective_user
+        save_user_info(user)
 
-    keyboard = [
-        [InlineKeyboardButton("🚗 Взять машину", callback_data="take_car")],
-        [InlineKeyboardButton("🔙 Вернуть машину", callback_data="return_car")],
-    ]
-    if chat_type == "private" and is_admin(user.id):
-        keyboard.append([InlineKeyboardButton("📜 История", callback_data="history")])
-        keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
+        keyboard = [
+            [InlineKeyboardButton("🚗 Взять машину", callback_data="take_car")],
+            [InlineKeyboardButton("🔙 Вернуть машину", callback_data="return_car")],
+        ]
 
-    msg = await context.bot.send_message(
-        chat_id=chat_id,
-        message_thread_id=message.message_thread_id if chat_type in ["group", "supergroup"] else None,
-        text="🚘 **Гараж**\nВыбери действие:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
-    asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 5))
+        msg = await context.bot.send_message(
+            chat_id=chat_id,
+            message_thread_id=message.message_thread_id,
+            text="🚘 **Гараж**\nВыбери действие:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 5))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -200,9 +210,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_delete(context, query.message.chat_id, query.message.message_id)
 
     if data == "take_car":
-        await show_free_cars(context, user)
+        await take_car(context, user, int(data.split("_")[1]))
     elif data == "return_car":
-        await show_user_taken_cars(context, user)
+        await ask_car_condition(context, user, int(data.split("_")[1]))
     elif data == "history" and is_admin(user.id):
         if chat_type == "private":
             await show_history(context, user)
@@ -215,10 +225,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             msg = await context.bot.send_message(user.id, "⚙️ Админ-панель доступна только в личных сообщениях")
             asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
-    elif data.startswith("take_"):
-        await take_car(context, user, int(data.split("_")[1]))
-    elif data.startswith("return_"):
-        await ask_car_condition(context, user, int(data.split("_")[1]))
     elif data.startswith("confirm_return_"):
         parts = data.split("_")
         await return_car(context, user, int(parts[2]), parts[3])
@@ -234,28 +240,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_taken_cars_for_admin(context, user)
     elif data.startswith("force_return_"):
         await force_return_car(context, user, int(data.split("_")[2]))
-    elif data == "back_to_menu":
-        await back_to_menu(context, user, chat_type)
-
-async def show_free_cars(context, user):
-    try:
-        with sqlite3.connect("garage.db") as conn:
-            cars = conn.execute("SELECT id, name, plate FROM cars WHERE is_taken = 0").fetchall()
-        if not cars:
-            msg = await context.bot.send_message(user.id, "😕 **Все машины заняты**")
-            asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
-            return
-        keyboard = []
-        for car_id, name, plate in cars:
-            plate_text = f" ({plate})" if plate else ""
-            keyboard.append([InlineKeyboardButton(f"{name}{plate_text}", callback_data=f"take_{car_id}")])
-        keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")])
-        msg = await context.bot.send_message(user.id, "🚗 **Доступные машины:**", reply_markup=InlineKeyboardMarkup(keyboard))
-        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 10))
-    except Exception as e:
-        logging.error(f"Ошибка: {e}")
-        msg = await context.bot.send_message(user.id, "❌ Ошибка загрузки")
-        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
+    elif data == "back_to_menu" and chat_type == "private" and is_admin(user.id):
+        await back_to_menu(context, user)
 
 async def take_car(context, user, car_id):
     try:
@@ -278,30 +264,6 @@ async def take_car(context, user, car_id):
     except Exception as e:
         logging.error(f"Ошибка: {e}")
         msg = await context.bot.send_message(user.id, "❌ Ошибка операции")
-        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
-
-async def show_user_taken_cars(context, user):
-    try:
-        with sqlite3.connect("garage.db") as conn:
-            if is_admin(user.id):
-                cars = conn.execute("SELECT id, name, plate FROM cars WHERE is_taken = 1").fetchall()
-            else:
-                cars = conn.execute("SELECT id, name, plate FROM cars WHERE is_taken = 1 AND taken_by = ?", (user.id,)).fetchall()
-        if not cars:
-            msg = "Нет занятых машин" if is_admin(user.id) else "У тебя нет взятых машин"
-            msg_obj = await context.bot.send_message(user.id, f"ℹ️ **{msg}**")
-            asyncio.create_task(delete_after_delay(context, msg_obj.chat_id, msg_obj.message_id, 3))
-            return
-        keyboard = []
-        for car_id, name, plate in cars:
-            plate_text = f" ({plate})" if plate else ""
-            keyboard.append([InlineKeyboardButton(f"{name}{plate_text}", callback_data=f"return_{car_id}")])
-        keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")])
-        msg = await context.bot.send_message(user.id, "🔙 **Твои машины:**", reply_markup=InlineKeyboardMarkup(keyboard))
-        asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 10))
-    except Exception as e:
-        logging.error(f"Ошибка: {e}")
-        msg = await context.bot.send_message(user.id, "❌ Ошибка загрузки")
         asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
 async def ask_car_condition(context, user, car_id):
@@ -493,15 +455,12 @@ async def force_return_car(context, admin, car_id):
         msg = await context.bot.send_message(admin.id, "❌ Ошибка операции")
         asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 3))
 
-async def back_to_menu(context, user, chat_type):
+async def back_to_menu(context, user):
     keyboard = [
-        [InlineKeyboardButton("🚗 Взять машину", callback_data="take_car")],
-        [InlineKeyboardButton("🔙 Вернуть машину", callback_data="return_car")],
+        [InlineKeyboardButton("📜 История", callback_data="history")],
+        [InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")],
     ]
-    if chat_type == "private" and is_admin(user.id):
-        keyboard.append([InlineKeyboardButton("📜 История", callback_data="history")])
-        keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
-    msg = await context.bot.send_message(user.id, "🚘 **Гараж**\nВыбери действие:", reply_markup=InlineKeyboardMarkup(keyboard))
+    msg = await context.bot.send_message(user.id, "👑 **Админ-панель**\nВыбери действие:", reply_markup=InlineKeyboardMarkup(keyboard))
     asyncio.create_task(delete_after_delay(context, msg.chat_id, msg.message_id, 10))
 
 # ========== НАСТРОЙКА ==========
