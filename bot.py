@@ -72,9 +72,7 @@ def get_user_name(user):
 async def insult_user(context, update):
     user = update.effective_user
     mention = get_user_mention(user)
-    # Удаляем сообщение пользователя
     await safe_delete(context, update.effective_chat.id, update.message.message_id)
-    # Отправляем ругательство (НЕ УДАЛЯЕМ его)
     insult = random.choice(INSULTS).format(mention)
     await update.effective_chat.send_message(insult, parse_mode="Markdown")
 
@@ -148,19 +146,29 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== МОДЕРАТОР ТОПИКА ==========
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Проверяем, что это группа
     if update.effective_chat.type not in ["group", "supergroup"]:
         return
+    
+    # Проверяем, что это наша группа
     if update.effective_chat.id != GROUP_CHAT_ID:
         return
+    
+    # ЕСЛИ НЕТ thread_id — ЭТО ОБЩИЙ ЧАТ, ИГНОРИРУЕМ ПОЛНОСТЬЮ
     if not update.message.message_thread_id:
         return
+    
+    # Проверяем, что это наш топик
     if update.message.message_thread_id != TOPIC_ID:
         return
+    
+    # Пропускаем команды
     if update.message.text and update.message.text.startswith("/cars"):
         return
     if update.message.text and update.message.text.startswith("/start"):
         return
-    # Всё остальное в топике — ругаемся (удаляем сообщение пользователя, НО НЕ своё)
+    
+    # Всё остальное в нашем топике — ругаемся
     await insult_user(context, update)
 
 # ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
@@ -188,6 +196,7 @@ async def cars_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if chat_type in ["group", "supergroup"]:
+        # Проверяем группу и топик
         if chat_id != GROUP_CHAT_ID or message.message_thread_id != TOPIC_ID:
             return
 
